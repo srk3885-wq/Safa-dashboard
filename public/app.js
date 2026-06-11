@@ -216,6 +216,7 @@ function render(){
   document.getElementById('cntInv').textContent=state.inventory.length;
   const v=document.getElementById('view');
   if(ui.view==='inventory'){v.innerHTML=renderInventory();return;}
+  if(ui.view==='breakdown'){v.innerHTML=renderBreakdown();return;}
   const list=filtered();
   if(!state.shipments.length){v.innerHTML=`<div class="tablecard"><div class="empty"><b>No shipments yet</b>Upload the Excel file or add a manual entry to get started.</div></div>`;return;}
   if(ui.view==='overview')v.innerHTML=renderOverview(list);
@@ -279,6 +280,104 @@ function renderOverview(list){
       <div class="ptotal"><b>${fmt(g.total)}</b> <span>cases total ${esc(g.product)}</span></div>
     </div>`;
   }).join('')+`</div>`;
+}
+
+/* ================= breakdown (graphs) ================= */
+function donutSVG(segs,centerNum,centerLbl){
+  const total=segs.reduce((a,s)=>a+s.value,0)||1;
+  const R=42,C=2*Math.PI*R;
+  let off=0;
+  const circles=segs.filter(s=>s.value>0).map(s=>{
+    const len=s.value/total*C;
+    const el=`<circle cx="55" cy="55" r="${R}" fill="none" stroke="${s.color}" stroke-width="13" stroke-dasharray="${len} ${C-len}" stroke-dashoffset="${-off}" transform="rotate(-90 55 55)"/>`;
+    off+=len;return el;
+  }).join('');
+  return `<svg width="110" height="110" viewBox="0 0 110 110">
+    <circle cx="55" cy="55" r="${R}" fill="none" stroke="var(--line2)" stroke-width="13"/>${circles}
+    <text x="55" y="52" text-anchor="middle" class="donut-center" fill="var(--ink)">${centerNum}</text>
+    <text x="55" y="68" text-anchor="middle" style="font-size:9.5px;font-weight:600;fill:var(--mut);letter-spacing:.05em">${centerLbl}</text>
+  </svg>`;
+}
+function donutCard(title,segs,centerNum,centerLbl){
+  const total=segs.reduce((a,s)=>a+s.value,0);
+  return `<div class="bd-card"><h4>${title}</h4><div class="donut-flex">
+    ${donutSVG(segs,centerNum,centerLbl)}
+    <div class="leg">${segs.map(s=>`<div class="li"><span class="dot2" style="background:${s.color}"></span>${esc(s.label)} <span class="lv">${fmt(s.value)}${total?' · '+Math.round(s.value/total*100)+'%':''}</span></div>`).join('')}</div>
+  </div></div>`;
+}
+function barCard(title,obj,unit,limit){
+  const entries=Object.entries(obj).sort((a,b)=>b[1]-a[1]);
+  const total=entries.reduce((a,e)=>a+e[1],0)||1;
+  const max=Math.max(...entries.map(e=>e[1]),1);
+  const shown=entries.slice(0,limit);
+  return `<div class="bd-card"><h4>${title}</h4>
+    ${shown.map(([k,v])=>`<div class="brow">
+      <div class="btop"><span class="bname" title="${esc(k)}">${esc(k)}</span>
+      <span class="bval">${fmt(v)}<span class="bpct">${Math.round(v/total*100)}%</span></span></div>
+      <div class="bar"><i style="width:${Math.max(v/max*100,1.5)}%"></i></div>
+    </div>`).join('')||'<div class="bd-more">No data</div>'}
+    ${entries.length>limit?`<div class="bd-more">+ ${entries.length-limit} more — use search or brand filter to narrow down</div>`:''}
+  </div>`;
+}
+function renderBreakdown(){
+  if(!state.shipments.length&&!state.inventory.length)
+    return `<div class="tablecard"><div class="empty"><b>No data yet</b>Upload a shipment or inventory file to see breakdowns.</div></div>`;
+  const src=ui.bdSrc||(state.shipments.length?'inbound':'stock');
+  const add=(o,k,v)=>{o[k]=(o[k]||0)+v;};
+  const byBrand={},bySpu={},bySku={};
+  let donuts='',unitLbl='cases';
+  if(src==='stock'){
+    unitLbl='units';
+    const thr=state.lowStockThreshold;
+    let ok=0,low=0,out=0,total=0;
+    state.inventory.filter(i=>{
+      if(ui.brand&&i.brand!==ui.brand)return false;
+      if(ui.q){const hay=[i.brand,i.product,i.flavor].join(' ').toLowerCase();if(!hay.includes(ui.q.toLowerCase()))return false;}
+      return true;
+    }).forEach(i=>{
+      const v=i.stock||0;total+=v;
+      add(byBrand,i.brand,v);
+      add(bySpu,i.brand+' · '+i.product,v);
+      add(bySku,i.brand+' · '+i.flavor,v);
+      if(!i.stock)out++;else if(i.stock<=thr)low++;else ok++;
+    });
+    donuts=donutCard('SKU health — stock alerts',[
+      {label:'OK',value:ok,color:'var(--truck)'},
+      {label:'Low stock',value:low,color:'var(--gold)'},
+      {label:'Out of stock',value:out,color:'var(--warn)'},
+    ],fmt(ok+low+out),'SKUS');
+  }else{
+    const list=filtered().filter(s=>INBOUND.includes(s.status));
+    const byMode={},byStatus={};
+    list.forEach(s=>{
+      const v=shipCases(s);
+      add(byBrand,s.brand,v);
+      add(bySpu,s.brand+' · '+s.productType,v);
+      add(byMode,s.mode,v);
+      add(byStatus,s.status,v);
+      s.flavors.forEach(f=>add(bySku,s.brand+' · '+f.name,f.cartons||0));
+    });
+    const totalCases=Object.values(byBrand).reduce((a,v)=>a+v,0);
+    const MODE_COLORS={SEA:'var(--sea)',AIR:'var(--air)',OTHER:'var(--mut)'};
+    const ST_COLORS={production:'var(--gold)',sea:'var(--sea)',air:'var(--air)',port:'#175cd3',truck:'var(--truck)',delayed:'var(--warn)'};
+    donuts=
+      donutCard('By shipment mode',Object.entries(byMode).map(([k,v])=>({label:k,value:v,color:MODE_COLORS[k]||'var(--mut)'})),fmt(totalCases),'CASES')+
+      donutCard('By status',Object.entries(byStatus).map(([k,v])=>({label:STATUSES[k].label,value:v,color:ST_COLORS[k]||'var(--mut)'})),fmt(totalCases),'CASES');
+  }
+  return `
+  <div class="bd-toolbar">
+    <span class="lbl2">Data</span>
+    <button class="chip ${src==='inbound'?'active':''}" onclick="ui.bdSrc='inbound';render()">Inbound shipments</button>
+    <button class="chip ${src==='stock'?'active':''}" onclick="ui.bdSrc='stock';render()" ${state.inventory.length?'':'disabled style="opacity:.4;cursor:not-allowed"'}>Warehouse stock</button>
+  </div>
+  <div class="bd-grid">${donuts}</div>
+  <div class="bd-grid">
+    ${barCard('By brand — '+unitLbl,byBrand,unitLbl,12)}
+    ${barCard('By product (SPU) — '+unitLbl,bySpu,unitLbl,12)}
+  </div>
+  <div class="bd-grid" style="grid-template-columns:1fr">
+    ${barCard('By flavor (SKU) — top 20 by '+unitLbl,bySku,unitLbl,20)}
+  </div>`;
 }
 
 function renderShipments(list){
