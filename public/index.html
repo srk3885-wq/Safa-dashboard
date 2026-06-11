@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SAFA — Incoming Shipments</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="brandmark">
+    <h1>SAFA <span>/ Incoming Shipments</span></h1>
+    <div class="asof" id="asof">No data loaded yet</div>
+  </div>
+  <div class="actions">
+    <button class="btn" id="btnAdd">+ Manual entry</button>
+    <button class="btn" id="btnExport">Export Excel</button>
+    <button class="btn ghost" id="btnBackup">Backup</button>
+    <button class="btn ghost" id="btnRestore">Restore</button>
+    <button class="btn primary" id="btnUpload">⬆ Upload data file</button>
+    <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" hidden>
+    <input type="file" id="restoreInput" accept=".json" hidden>
+  </div>
+</header>
+
+<div class="dropzone" id="dropzone">
+  <div class="dz-title">Drop a data file here — shipments or inventory</div>
+  <div class="dz-sub">or click to browse · shipment template or stock list (Product Name / Current Stock) · file type is detected automatically · re-upload any time to refresh</div>
+</div>
+
+<div class="stats" id="stats"></div>
+
+<div class="tabs">
+  <button class="tab active" data-view="overview">Overview</button>
+  <button class="tab" data-view="shipments">Shipments <span class="pill" id="cntShip">0</span></button>
+  <button class="tab" data-view="sku">SKU Explorer <span class="pill" id="cntSku">0</span></button>
+  <button class="tab" data-view="inventory">Inventory <span class="pill" id="cntInv">0</span></button>
+</div>
+
+<div class="filterbar">
+  <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+    <input id="q" placeholder="Search brand, product, flavor, status…"></div>
+  <select class="flt" id="fMode"><option value="">All modes</option><option>SEA</option><option>AIR</option></select>
+  <select class="flt" id="fStatus"><option value="">All statuses</option></select>
+  <div id="brandChips" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+</div>
+
+<div id="view"></div>
+</div>
+
+<dialog id="modal">
+  <form method="dialog" id="shipForm">
+    <div class="mhead"><h3 id="mtitle">Manual entry</h3><button type="button" class="iconbtn" onclick="modal.close()">✕</button></div>
+    <div class="mbody">
+      <div class="mgrid2">
+        <div class="mrow"><label>Shipment type</label>
+          <select id="inMode"><option>SEA</option><option>AIR</option><option>OTHER</option></select></div>
+        <div class="mrow"><label>Pick up date</label><input type="date" id="inDate"></div>
+      </div>
+      <div class="mgrid2">
+        <div class="mrow"><label>Brand</label><input id="inBrand" list="brandList" placeholder="e.g. RAZ" required><datalist id="brandList"></datalist></div>
+        <div class="mrow"><label>Product type (SPU)</label><input id="inProduct" list="productList" placeholder="e.g. VUE POD" required><datalist id="productList"></datalist></div>
+      </div>
+      <div class="mrow"><label>Flavors — one per line <span class="hint">format: Flavor name 70ctns</span></label>
+        <textarea id="inFlavors" rows="5" placeholder="White Gummy (new UI) 70ctns&#10;Polar Ice (new UI) 40ctns"></textarea>
+        <div class="calcline" id="flavCalc"></div></div>
+      <div class="mgrid2">
+        <div class="mrow"><label>Box count <span class="hint">(blank = auto from flavors)</span></label><input type="number" id="inCount" min="0"></div>
+        <div class="mrow"><label>Status</label><select id="inStatus"></select></div>
+      </div>
+      <div class="mrow"><label>Cargo status / remarks</label><input id="inCargo" placeholder="e.g. VESSEL WILL DEPART ON 6/10"></div>
+      <div class="mrow"><label>Notes</label><textarea id="inNotes" rows="2" placeholder="optional"></textarea></div>
+    </div>
+    <div class="mfoot">
+      <button type="button" class="btn" onclick="modal.close()">Cancel</button>
+      <button type="submit" class="btn primary" id="msave">Save shipment</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="invModal">
+  <form method="dialog" id="invForm">
+    <div class="mhead"><h3>Add inventory item</h3><button type="button" class="iconbtn" onclick="invModal.close()">✕</button></div>
+    <div class="mbody">
+      <div class="mgrid2">
+        <div class="mrow"><label>Brand</label><input id="invBrand" required placeholder="Beri"></div>
+        <div class="mrow"><label>Product (SPU)</label><input id="invProduct" required placeholder="CLIQ 50K Refills [5PC]"></div>
+      </div>
+      <div class="mgrid2">
+        <div class="mrow"><label>Flavor (SKU)</label><input id="invFlavor" required placeholder="White Strawberry"></div>
+        <div class="mrow"><label>Current stock</label><input id="invStock" type="number" min="0" value="0"></div>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button type="button" class="btn" onclick="invModal.close()">Cancel</button>
+      <button type="submit" class="btn primary">Add item</button>
+    </div>
+  </form>
+</dialog>
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

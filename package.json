@@ -1,0 +1,13 @@
+{
+  "name": "safa-dashboard",
+  "version": "1.0.0",
+  "description": "SAFA incoming shipments & inventory dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "express": "^4.19.0"
+  }
+}
