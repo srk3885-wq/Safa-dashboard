@@ -1,13 +1,16 @@
 {
-  "name": "safa-dashboard",
+  "name": "safa-inventory-dashboard",
   "version": "1.0.0",
-  "description": "SAFA incoming shipments & inventory dashboard",
-  "main": "server.js",
+  "private": true,
+  "description": "Minimal incoming shipments and inventory dashboard for SAFA/SLS Distribution.",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
-    "express": "^4.19.0"
+    "read-excel-file": "^5.8.8"
   }
 }

@@ -1,41 +1,39 @@
-# SAFA Dashboard
+# SLS Distribution Incoming Shipments
 
-Incoming shipments + warehouse inventory dashboard. Drag-and-drop Excel upload, manual entries, low-stock alerts.
-
-## Project layout
-
-| File | What it is |
-|---|---|
-| `public/index.html` | Page structure (header, tabs, modals) |
-| `public/styles.css` | All styling — colors, cards, tables |
-| `public/app.js` | All logic — Excel parsing, views, manual entries |
-| `server.js` | Tiny web server (Railway runs this) |
+A minimal web dashboard for incoming goods, inventory, in-transit shipments, and manual shipment entries.
 
 ## Run locally
 
-```
+```bash
 npm install
-npm start          # opens on http://localhost:3000
+npm start
 ```
 
-## Deploy to Railway (first time)
+Open `http://localhost:4173`.
 
-1. Push this folder to a GitHub repo (github.com → New repository → upload these files).
-2. Go to railway.app → New Project → **Deploy from GitHub repo** → pick the repo.
-3. Railway auto-detects Node, runs `npm start`, and gives you a public URL
-   (Settings → Networking → **Generate Domain**).
+## Raw data format
 
-## Make changes later
+The uploader supports `.xlsx` and `.csv` files with columns like:
 
-Edit the file, commit/push to GitHub — Railway redeploys automatically in ~1 min.
+- `Shipment Type`
+- `Pick Up Date`
+- `Brand`
+- `Product Type`
+- `Flavors`
+- `Box Count`
+- `Cargo Status`
 
-Common edits:
-- **Company name / title**: search "SAFA" in `public/index.html`
-- **Colors**: `:root` variables at top of `public/styles.css`
-- **Low-stock default**: `lowStockThreshold:50` in `public/app.js`
-- **Column name aliases** (if the Excel headers change): `HEADER_ALIASES` / `INV_ALIASES` in `public/app.js`
-- **Status keywords** (how cargo text maps to sea/air/port/truck): `deriveStatus()` in `public/app.js`
+The `Flavors` column can include multiple lines such as `White Gummy 70ctns`; the dashboard will split and total those lines automatically.
 
-## Notes
+## Put it online
 
-- Data is stored in each user's browser (localStorage). The uploaded Excel is the source of truth — re-upload to refresh. Use Backup/Restore buttons to move data between computers.
+Install dependencies, then deploy it as a small Node app with:
+
+```bash
+npm install
+npm start
+```
+
+For a public team link, set an `ADMIN_PIN` environment variable on the host. Viewers can see the dashboard, and the inventory person enters the same key before uploading or editing data.
+
+Recommended hosts: Render, Railway, Fly.io, or any VPS with persistent disk enabled. If you deploy to a serverless platform without persistent storage, connect the save endpoint to a database first.

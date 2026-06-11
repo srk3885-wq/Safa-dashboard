@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SLS Distribution - Incoming Shipments</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/vendor/read-excel-file.min.js" defer></script>
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">SLS Distribution</p>
+          <h1>Incoming Shipments</h1>
+        </div>
+        <div class="header-meta">
+          <span id="connectionBadge" class="status-pill">Loading</span>
+          <span>As of <strong id="asOfDate">--</strong></span>
+        </div>
+      </header>
+
+      <section id="metrics" class="metrics" aria-label="Shipment summary"></section>
+
+      <section class="workspace" aria-label="Data controls">
+        <div class="control-panel">
+          <div class="panel-head">
+            <h2>Data Intake</h2>
+            <span id="saveState">Ready</span>
+          </div>
+
+          <label id="fileDrop" class="file-drop" for="fileInput">
+            <input id="fileInput" type="file" accept=".xlsx,.csv,text/csv" hidden>
+            <span class="drop-title">Raw Data File</span>
+            <span class="drop-meta">XLSX or CSV</span>
+          </label>
+
+          <div class="segmented" role="radiogroup" aria-label="Import mode">
+            <button class="segment active" type="button" data-import-mode="replace">Replace</button>
+            <button class="segment" type="button" data-import-mode="merge">Merge</button>
+          </div>
+
+          <label class="field compact">
+            <span>Edit Key</span>
+            <input id="adminPin" type="password" autocomplete="off" placeholder="Optional">
+          </label>
+
+          <div class="actions">
+            <button id="exportJson" type="button">Export JSON</button>
+            <button id="clearData" type="button" class="ghost">Clear</button>
+          </div>
+        </div>
+
+        <form id="manualForm" class="manual-panel">
+          <div class="panel-head">
+            <h2>Manual Entry</h2>
+            <span>Single shipment</span>
+          </div>
+
+          <div class="form-grid">
+            <label class="field">
+              <span>Brand</span>
+              <input name="brand" required placeholder="BERI">
+            </label>
+            <label class="field">
+              <span>Product</span>
+              <input name="productType" required placeholder="CLIQ POD">
+            </label>
+            <label class="field">
+              <span>Cases</span>
+              <input name="boxCount" required inputmode="numeric" placeholder="705">
+            </label>
+            <label class="field">
+              <span>Type</span>
+              <select name="shipmentType">
+                <option>SEA</option>
+                <option>AIR</option>
+                <option>TRUCK</option>
+                <option>SEA or AIR</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Pick Up Date</span>
+              <input name="pickupDate" type="date">
+            </label>
+            <label class="field">
+              <span>Status</span>
+              <input name="cargoStatus" placeholder="VESSEL DEPARTED 6/11">
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Flavor Lines</span>
+            <textarea name="flavors" rows="3" placeholder="White Gummy 70ctns&#10;Polar Ice 40ctns"></textarea>
+          </label>
+
+          <button class="primary" type="submit">Add Entry</button>
+        </form>
+      </section>
+
+      <section class="toolbar" aria-label="Filters">
+        <label class="field search-field">
+          <span>Search</span>
+          <input id="searchInput" type="search" placeholder="Brand, product, flavor, status">
+        </label>
+        <label class="field">
+          <span>Status</span>
+          <select id="phaseFilter">
+            <option value="all">All statuses</option>
+            <option value="Scheduled">Scheduled</option>
+            <option value="In Transit">In Transit</option>
+            <option value="Port Arrival">Port Arrival</option>
+            <option value="Trucking">Trucking</option>
+            <option value="Received">Received</option>
+            <option value="Attention">Attention</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Freight</span>
+          <select id="modeFilter">
+            <option value="all">All freight</option>
+            <option value="Sea">Sea</option>
+            <option value="Air">Air</option>
+            <option value="Truck">Truck</option>
+            <option value="Mixed">Mixed</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="section-head">
+        <div>
+          <p class="eyebrow">Product Breakdown</p>
+          <h2>Total Cases Inbound</h2>
+        </div>
+        <span id="rowCount">0 shipments</span>
+      </section>
+
+      <section id="productGrid" class="product-grid" aria-live="polite"></section>
+
+      <section class="table-section" aria-label="Shipment details">
+        <div class="section-head compact-head">
+          <div>
+            <p class="eyebrow">Live Detail</p>
+            <h2>Shipment Log</h2>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th>Cases</th>
+                <th>Freight</th>
+                <th>Status</th>
+                <th>Date</th>
+                <th>Source</th>
+              </tr>
+            </thead>
+            <tbody id="shipmentRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
