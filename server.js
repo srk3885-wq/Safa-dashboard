@@ -7,6 +7,12 @@ const ROOT = __dirname;
 const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || (process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
 const ADMIN_PIN = process.env.ADMIN_PIN || "";
+const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || "";
+const AUTH_SECRET =
+  process.env.SESSION_SECRET ||
+  crypto.createHash("sha256").update(`safa::${DASHBOARD_PASSWORD}`).digest("hex");
+const AUTH_COOKIE = "safa_auth";
+const AUTH_MAX_AGE_DAYS = 30;
 const DATA_DIR = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR)
   : path.join(ROOT, "data");
@@ -102,6 +108,117 @@ function parseBody(req) {
 function canWrite(req) {
   if (!ADMIN_PIN) return true;
   return req.headers["x-admin-pin"] === ADMIN_PIN;
+}
+
+/* ---------- view password (login page) ---------- */
+function expectedAuthToken() {
+  return crypto.createHmac("sha256", AUTH_SECRET).update(`ok::${DASHBOARD_PASSWORD}`).digest("hex");
+}
+
+function getCookie(req, name) {
+  const header = req.headers.cookie || "";
+  const match = header.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function isAuthed(req) {
+  if (!DASHBOARD_PASSWORD) return true; // no password configured -> open
+  const token = getCookie(req, AUTH_COOKIE) || "";
+  const expected = expectedAuthToken();
+  if (token.length !== expected.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(expected));
+}
+
+function readRawBody(req) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > 64 * 1024) {
+        reject(new Error("Payload is too large."));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
+function loginPage(error) {
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SAFA — Sign in</title><style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:#f7f7f8;color:#0e0e10;display:flex;align-items:center;justify-content:center;min-height:100vh;-webkit-font-smoothing:antialiased}
+.card{background:#fff;border:1px solid #e6e6ea;border-radius:16px;padding:40px 36px;width:94vw;max-width:380px;box-shadow:0 1px 2px rgba(14,14,16,.04),0 8px 32px rgba(14,14,16,.07)}
+h1{font-size:20px;font-weight:800;letter-spacing:-.02em}
+h1 span{color:#8a8a93;font-weight:600}
+p{color:#8a8a93;font-size:13px;margin:6px 0 24px}
+label{display:block;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#8a8a93;margin-bottom:6px}
+input{width:100%;border:1px solid #e6e6ea;border-radius:10px;padding:12px 14px;font-size:16px;outline:none;font-family:inherit}
+input:focus{border-color:#0e0e10}
+button{width:100%;margin-top:14px;background:#0e0e10;color:#fff;border:none;border-radius:10px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit}
+button:hover{background:#26262b}
+.err{background:#fee4e2;color:#b42318;border-radius:8px;padding:9px 12px;font-size:12.5px;font-weight:600;margin-bottom:14px}
+</style></head><body>
+<form class="card" method="POST" action="/login">
+  <h1>SAFA <span>/ Incoming Shipments</span></h1>
+  <p>Enter the team password to continue.</p>
+  ${error ? '<div class="err">Wrong password — try again.</div>' : ""}
+  <label for="pw">Password</label>
+  <input id="pw" name="password" type="password" autofocus autocomplete="current-password">
+  <button type="submit">Sign in</button>
+</form></body></html>`;
+}
+
+function sendLoginPage(res, status, error) {
+  res.writeHead(status, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+  res.end(loginPage(error));
+}
+
+async function handleAuthRoutes(req, res, pathname) {
+  if (pathname === "/login" && req.method === "GET") {
+    if (isAuthed(req)) {
+      res.writeHead(302, { Location: "/" });
+      res.end();
+    } else {
+      sendLoginPage(res, 200, false);
+    }
+    return true;
+  }
+
+  if (pathname === "/login" && req.method === "POST") {
+    const body = await readRawBody(req);
+    const given = String(new URLSearchParams(body).get("password") || "");
+    const a = crypto.createHash("sha256").update(given).digest();
+    const b = crypto.createHash("sha256").update(DASHBOARD_PASSWORD).digest();
+    if (DASHBOARD_PASSWORD && crypto.timingSafeEqual(a, b)) {
+      const secure =
+        req.headers["x-forwarded-proto"] === "https" ? "; Secure" : "";
+      res.writeHead(302, {
+        Location: "/",
+        "Set-Cookie": `${AUTH_COOKIE}=${expectedAuthToken()}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${AUTH_MAX_AGE_DAYS * 86400}${secure}`
+      });
+      res.end();
+    } else {
+      sendLoginPage(res, 401, true);
+    }
+    return true;
+  }
+
+  if (pathname === "/logout") {
+    res.writeHead(302, {
+      Location: "/login",
+      "Set-Cookie": `${AUTH_COOKIE}=; Path=/; HttpOnly; Max-Age=0`
+    });
+    res.end();
+    return true;
+  }
+
+  return false;
 }
 
 function asText(value) {
@@ -244,6 +361,20 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     const pathname = url.pathname;
+
+    if (await handleAuthRoutes(req, res, pathname)) {
+      return;
+    }
+
+    if (!isAuthed(req)) {
+      if (pathname.startsWith("/api/")) {
+        sendJson(res, 401, { error: "Sign in required." });
+      } else {
+        res.writeHead(302, { Location: "/login" });
+        res.end();
+      }
+      return;
+    }
 
     if (pathname.startsWith("/api/")) {
       await handleApi(req, res, pathname);
