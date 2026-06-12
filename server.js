@@ -150,7 +150,7 @@ function readRawBody(req) {
 function loginPage(error) {
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SAFA — Sign in</title><style>
+<title>Shipment/Inventory — Sign in</title><style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:#f7f7f8;color:#0e0e10;display:flex;align-items:center;justify-content:center;min-height:100vh;-webkit-font-smoothing:antialiased}
 .card{background:#fff;border:1px solid #e6e6ea;border-radius:16px;padding:40px 36px;width:94vw;max-width:380px;box-shadow:0 1px 2px rgba(14,14,16,.04),0 8px 32px rgba(14,14,16,.07)}
@@ -165,7 +165,7 @@ button:hover{background:#26262b}
 .err{background:#fee4e2;color:#b42318;border-radius:8px;padding:9px 12px;font-size:12.5px;font-weight:600;margin-bottom:14px}
 </style></head><body>
 <form class="card" method="POST" action="/login">
-  <h1>SAFA <span>/ Incoming Shipments</span></h1>
+  <h1>Shipment <span>/ Inventory</span></h1>
   <p>Enter the team password to continue.</p>
   ${error ? '<div class="err">Wrong password — try again.</div>' : ""}
   <label for="pw">Password</label>
