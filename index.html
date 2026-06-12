@@ -48,6 +48,7 @@
 
           <div class="actions">
             <button id="boardReport" type="button" class="primary">Board Report</button>
+            <button id="exportCsv" type="button">Export CSV</button>
             <button id="exportJson" type="button">Export JSON</button>
             <button id="clearData" type="button" class="ghost">Clear</button>
           </div>
@@ -131,6 +132,61 @@
 
       <section class="section-head">
         <div>
+          <p class="eyebrow">Arrivals</p>
+          <h2>Upcoming Calendar</h2>
+        </div>
+        <span id="calRange"></span>
+      </section>
+
+      <section id="calendarGrid" class="calendar" aria-label="Arrival calendar"></section>
+
+      <section class="section-head">
+        <div>
+          <p class="eyebrow">Warehouse</p>
+          <h2>Inventory</h2>
+        </div>
+        <span id="invCount">No stock loaded</span>
+      </section>
+
+      <section class="inventory-section" aria-label="Inventory">
+        <div class="inventory-tools">
+          <label id="invFileDrop" class="file-drop slim" for="invFileInput">
+            <input id="invFileInput" type="file" accept=".xlsx,.csv,text/csv" hidden>
+            <span class="drop-title">Stock File</span>
+            <span class="drop-meta">Product Name + Current Stock</span>
+          </label>
+          <label class="field compact">
+            <span>Low-stock alert &le;</span>
+            <input id="invThreshold" type="number" min="0" value="50">
+          </label>
+          <form id="invForm" class="inv-add">
+            <input name="brand" placeholder="Brand" required>
+            <input name="product" placeholder="Product (SPU)" required>
+            <input name="flavor" placeholder="Flavor (SKU)" required>
+            <input name="stock" type="number" min="0" placeholder="Stock" required>
+            <button type="submit">Add</button>
+          </form>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Brand</th>
+                <th>Product (SPU)</th>
+                <th>Flavor (SKU)</th>
+                <th class="num-head">In Stock</th>
+                <th class="num-head">Inbound</th>
+                <th>Alert</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="invRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section-head">
+        <div>
           <p class="eyebrow">Product Breakdown</p>
           <h2>Total Cases Inbound</h2>
         </div>
@@ -145,6 +201,7 @@
             <p class="eyebrow">Live Detail</p>
             <h2>Shipment Log</h2>
           </div>
+          <button id="archiveToggle" type="button" class="ghost">Show archived (0)</button>
         </div>
         <div class="table-wrap">
           <table>

@@ -17,6 +17,8 @@ const DATA_DIR = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR)
   : path.join(ROOT, "data");
 const DATA_FILE = path.join(DATA_DIR, "shipments.json");
+const INVENTORY_FILE = path.join(DATA_DIR, "inventory.json");
+const SNAP_DIR = path.join(DATA_DIR, "snapshots");
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
 
 const staticFiles = new Map([
@@ -75,6 +77,91 @@ async function saveData(data) {
   const tmp = `${DATA_FILE}.tmp`;
   await fs.writeFile(tmp, payload);
   await fs.rename(tmp, DATA_FILE);
+}
+
+
+function sanitizeItem(item) {
+  if (!item || typeof item !== "object") return null;
+  const clean = {
+    id: asText(item.id) || crypto.randomUUID(),
+    brand: asText(item.brand) || "—",
+    product: asText(item.product) || "—",
+    flavor: asText(item.flavor) || "—",
+    stock: Math.max(0, asNumber(item.stock)),
+    updatedAt: asText(item.updatedAt) || new Date().toISOString()
+  };
+  if (clean.brand === "—" && clean.product === "—" && clean.flavor === "—") return null;
+  return clean;
+}
+
+function itemKey(item) {
+  return [item.brand, item.product, item.flavor].map((p) => asText(p).toLowerCase()).join("|");
+}
+
+async function readInventory() {
+  try {
+    const text = await fs.readFile(INVENTORY_FILE, "utf8");
+    const parsed = JSON.parse(text);
+    return {
+      items: Array.isArray(parsed.items) ? parsed.items.map(sanitizeItem).filter(Boolean) : [],
+      lastUpdated: parsed.lastUpdated || null
+    };
+  } catch {
+    return { items: [], lastUpdated: null };
+  }
+}
+
+async function saveInventory(data) {
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  const tmp = `${INVENTORY_FILE}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(data, null, 2));
+  await fs.rename(tmp, INVENTORY_FILE);
+}
+
+async function writeSnapshot() {
+  try {
+    const [ship, inv] = await Promise.all([readData(), readInventory()]);
+    const brands = {};
+    let totalCases = 0;
+    for (const row of ship.rows) {
+      const cases = Number(row.boxCount) || 0;
+      totalCases += cases;
+      const key = (row.brand || "—").toUpperCase();
+      brands[key] = (brands[key] || 0) + cases;
+    }
+    const totalStock = inv.items.reduce((sum, item) => sum + (Number(item.stock) || 0), 0);
+    const date = new Date().toISOString().slice(0, 10);
+    await fs.mkdir(SNAP_DIR, { recursive: true });
+    await fs.writeFile(
+      path.join(SNAP_DIR, `${date}.json`),
+      JSON.stringify({
+        date,
+        totalCases,
+        shipmentCount: ship.rows.length,
+        brands,
+        totalStock,
+        skuCount: inv.items.length
+      }, null, 2)
+    );
+  } catch {
+    /* snapshots must never break a save */
+  }
+}
+
+async function listSnapshots() {
+  try {
+    const files = await fs.readdir(SNAP_DIR);
+    const snaps = [];
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      try {
+        snaps.push(JSON.parse(await fs.readFile(path.join(SNAP_DIR, file), "utf8")));
+      } catch {}
+    }
+    return snaps.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  } catch {
+    return [];
+  }
 }
 
 function parseBody(req) {
@@ -338,6 +425,7 @@ async function handleApi(req, res, pathname) {
     const next = { rows, lastUpdated: new Date().toISOString() };
 
     await saveData(next);
+    await writeSnapshot();
     sendJson(res, 200, next);
     return;
   }
@@ -350,7 +438,56 @@ async function handleApi(req, res, pathname) {
 
     const next = { rows: [], lastUpdated: new Date().toISOString() };
     await saveData(next);
+    await writeSnapshot();
     sendJson(res, 200, next);
+    return;
+  }
+
+  if (pathname === "/api/inventory" && req.method === "GET") {
+    const data = await readInventory();
+    sendJson(res, 200, { ...data, protected: Boolean(ADMIN_PIN) });
+    return;
+  }
+
+  if (pathname === "/api/inventory" && req.method === "POST") {
+    if (!canWrite(req)) {
+      sendJson(res, 401, { error: "Edit key is required." });
+      return;
+    }
+    const body = await parseBody(req);
+    const incoming = Array.isArray(body.items) ? body.items.map(sanitizeItem).filter(Boolean) : [];
+    const mode = body.mode === "merge" ? "merge" : "replace";
+    let items = incoming;
+    if (mode === "merge") {
+      const current = await readInventory();
+      const map = new Map(current.items.map((item) => [itemKey(item), item]));
+      for (const item of incoming) {
+        const existing = map.get(itemKey(item));
+        map.set(itemKey(item), { ...item, id: existing?.id || item.id, updatedAt: new Date().toISOString() });
+      }
+      items = Array.from(map.values());
+    }
+    const next = { items, lastUpdated: new Date().toISOString() };
+    await saveInventory(next);
+    await writeSnapshot();
+    sendJson(res, 200, next);
+    return;
+  }
+
+  if (pathname === "/api/inventory" && req.method === "DELETE") {
+    if (!canWrite(req)) {
+      sendJson(res, 401, { error: "Edit key is required." });
+      return;
+    }
+    const next = { items: [], lastUpdated: new Date().toISOString() };
+    await saveInventory(next);
+    await writeSnapshot();
+    sendJson(res, 200, next);
+    return;
+  }
+
+  if (pathname === "/api/snapshots" && req.method === "GET") {
+    sendJson(res, 200, { snapshots: await listSnapshots() });
     return;
   }
 

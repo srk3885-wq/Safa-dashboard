@@ -1,5 +1,8 @@
 const STORE_KEY = "safa-inventory-rows-v1";
 const PIN_KEY = "safa-inventory-edit-key-v1";
+const INV_STORE_KEY = "safa-warehouse-items-v1";
+const THRESHOLD_KEY = "safa-low-threshold-v1";
+const ARCHIVE_AFTER_DAYS = 14;
 
 const SAMPLE_ROWS = [
   {
@@ -18,6 +21,10 @@ const SAMPLE_ROWS = [
 
 const state = {
   rows: [],
+  inventory: [],
+  snapshots: [],
+  showArchive: false,
+  threshold: Number(localStorage.getItem("safa-low-threshold-v1")) || 50,
   serverOnline: false,
   importMode: "replace",
   filters: {
@@ -63,7 +70,17 @@ function cacheElements() {
     manualForm: document.querySelector("#manualForm"),
     searchInput: document.querySelector("#searchInput"),
     phaseFilter: document.querySelector("#phaseFilter"),
-    modeFilter: document.querySelector("#modeFilter")
+    modeFilter: document.querySelector("#modeFilter"),
+    exportCsv: document.querySelector("#exportCsv"),
+    archiveToggle: document.querySelector("#archiveToggle"),
+    calendarGrid: document.querySelector("#calendarGrid"),
+    calRange: document.querySelector("#calRange"),
+    invFileInput: document.querySelector("#invFileInput"),
+    invFileDrop: document.querySelector("#invFileDrop"),
+    invThreshold: document.querySelector("#invThreshold"),
+    invForm: document.querySelector("#invForm"),
+    invRows: document.querySelector("#invRows"),
+    invCount: document.querySelector("#invCount")
   });
 }
 
@@ -104,7 +121,82 @@ function bindEvents() {
   });
 
   els.boardReport.addEventListener("click", openBoardReport);
+  els.exportCsv.addEventListener("click", exportCsv);
   els.exportJson.addEventListener("click", exportJson);
+
+  els.archiveToggle.addEventListener("click", () => {
+    state.showArchive = !state.showArchive;
+    render();
+  });
+
+  els.invFileInput.addEventListener("change", () => {
+    const file = els.invFileInput.files?.[0];
+    if (file) handleInventoryFile(file);
+    els.invFileInput.value = "";
+  });
+  els.invFileDrop.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    els.invFileDrop.classList.add("is-dragging");
+  });
+  els.invFileDrop.addEventListener("dragleave", () => els.invFileDrop.classList.remove("is-dragging"));
+  els.invFileDrop.addEventListener("drop", (event) => {
+    event.preventDefault();
+    els.invFileDrop.classList.remove("is-dragging");
+    const file = event.dataTransfer.files?.[0];
+    if (file) handleInventoryFile(file);
+  });
+
+  els.invThreshold.value = state.threshold;
+  els.invThreshold.addEventListener("change", () => {
+    state.threshold = Math.max(0, Number(els.invThreshold.value) || 0);
+    localStorage.setItem(THRESHOLD_KEY, String(state.threshold));
+    render();
+  });
+
+  els.invForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(els.invForm);
+    const item = {
+      brand: cleanText(data.get("brand")),
+      product: cleanText(data.get("product")),
+      flavor: cleanText(data.get("flavor")),
+      stock: Math.max(0, Number(data.get("stock")) || 0)
+    };
+    try {
+      await applyIncomingInventory([item], "merge");
+      els.invForm.reset();
+      setStatus("Inventory item added");
+    } catch (error) {
+      setStatus(error.message || "Inventory save failed");
+    }
+  });
+
+  els.invRows.addEventListener("change", async (event) => {
+    const input = event.target.closest("input[data-stock-id]");
+    if (!input) return;
+    const item = state.inventory.find((entry) => entry.id === input.dataset.stockId);
+    if (!item) return;
+    item.stock = Math.max(0, Number(input.value) || 0);
+    try {
+      await applyIncomingInventory(state.inventory, "replace");
+      setStatus("Stock updated");
+    } catch (error) {
+      setStatus(error.message || "Stock update failed");
+    }
+  });
+
+  els.invRows.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-del-id]");
+    if (!button) return;
+    const item = state.inventory.find((entry) => entry.id === button.dataset.delId);
+    if (!item || !window.confirm(`Delete ${item.brand} ${item.product} | ${item.flavor}?`)) return;
+    try {
+      await applyIncomingInventory(state.inventory.filter((entry) => entry.id !== item.id), "replace");
+      setStatus("Inventory item removed");
+    } catch (error) {
+      setStatus(error.message || "Delete failed");
+    }
+  });
   els.clearData.addEventListener("click", clearData);
   els.manualForm.addEventListener("submit", handleManualEntry);
 
@@ -133,11 +225,30 @@ async function loadInitialData() {
     const data = await response.json();
     state.serverOnline = true;
     state.rows = normalizeRows(data.rows?.length ? data.rows : SAMPLE_ROWS);
+    try {
+      const invResponse = await fetch("/api/inventory", { cache: "no-store" });
+      const invData = invResponse.ok ? await invResponse.json() : { items: [] };
+      state.inventory = Array.isArray(invData.items) ? invData.items : [];
+    } catch {
+      state.inventory = [];
+    }
+    try {
+      const snapResponse = await fetch("/api/snapshots", { cache: "no-store" });
+      const snapData = snapResponse.ok ? await snapResponse.json() : { snapshots: [] };
+      state.snapshots = Array.isArray(snapData.snapshots) ? snapData.snapshots : [];
+    } catch {
+      state.snapshots = [];
+    }
     setStatus("Shared data");
   } catch {
     state.serverOnline = false;
     const saved = readLocalRows();
     state.rows = normalizeRows(saved.length ? saved : SAMPLE_ROWS);
+    try {
+      state.inventory = JSON.parse(localStorage.getItem(INV_STORE_KEY) || "[]");
+    } catch {
+      state.inventory = [];
+    }
     setStatus("Local data");
   }
 }
@@ -241,6 +352,307 @@ async function clearData() {
 }
 
 
+
+/* ================= inventory ================= */
+async function handleInventoryFile(file) {
+  try {
+    setStatus("Reading stock file");
+    const items = await parseInventoryFile(file);
+    if (!items.length) throw new Error("No usable stock rows were found.");
+    await applyIncomingInventory(items, "replace");
+    setStatus(`${items.length} SKU${items.length === 1 ? "" : "s"} imported`);
+  } catch (error) {
+    setStatus(error.message || "Stock import failed");
+  }
+}
+
+async function parseInventoryFile(file) {
+  const name = (file.name || "").toLowerCase();
+  let table;
+  if (name.endsWith(".csv") || file.type === "text/csv") {
+    const text = await file.text();
+    table = text.split(/\r?\n/).map((line) => splitCsvLine(line));
+  } else {
+    if (!window.readXlsxFile) throw new Error("Excel reader is not available.");
+    table = await window.readXlsxFile(file);
+  }
+  return inventoryTableToItems(table);
+}
+
+function splitCsvLine(line) {
+  const out = [];
+  let cur = "";
+  let quoted = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (quoted && line[i + 1] === '"') {
+        cur += '"';
+        i += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (ch === "," && !quoted) {
+      out.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+function inventoryTableToItems(table) {
+  if (!Array.isArray(table) || !table.length) return [];
+  let headerIndex = -1;
+  let nameCol = -1;
+  let stockCol = -1;
+  for (let i = 0; i < Math.min(table.length, 10); i += 1) {
+    const cells = (table[i] || []).map((cell) => cleanText(cell).toLowerCase().replace(/[^a-z]/g, ""));
+    const nIdx = cells.findIndex((cell) => /^(productname|product|itemname|item|sku|description|name)/.test(cell) && cell);
+    const sIdx = cells.findIndex((cell) => /^(currentstock|stock|onhand|qtyonhand|inventory|available|balance|quantity|qty|units)/.test(cell) && cell);
+    if (nIdx >= 0 && sIdx >= 0 && nIdx !== sIdx) {
+      headerIndex = i;
+      nameCol = nIdx;
+      stockCol = sIdx;
+      break;
+    }
+  }
+  if (headerIndex < 0) return [];
+
+  const items = [];
+  for (let i = headerIndex + 1; i < table.length; i += 1) {
+    const row = table[i] || [];
+    const rawName = cleanText(row[nameCol]);
+    if (!rawName || /^(grand\s*)?total/i.test(rawName)) continue;
+    const stock = Math.max(0, parseNumber(row[stockCol]));
+    items.push({ ...parseStockProductName(rawName), stock });
+  }
+  return items;
+}
+
+function parseStockProductName(text) {
+  let brand = "—";
+  let product = "—";
+  let flavor = cleanText(text);
+  const pipeIndex = flavor.indexOf("|");
+  if (pipeIndex >= 0) {
+    const left = flavor.slice(0, pipeIndex).trim();
+    flavor = flavor.slice(pipeIndex + 1).trim() || "—";
+    const dashIndex = left.indexOf(" - ");
+    if (dashIndex >= 0) {
+      brand = left.slice(0, dashIndex).trim() || "—";
+      product = left.slice(dashIndex + 3).trim() || "—";
+    } else {
+      product = left || "—";
+    }
+  } else {
+    const dashIndex = flavor.indexOf(" - ");
+    if (dashIndex >= 0) {
+      brand = flavor.slice(0, dashIndex).trim() || "—";
+      flavor = flavor.slice(dashIndex + 3).trim() || "—";
+    }
+  }
+  return { brand, product, flavor };
+}
+
+async function applyIncomingInventory(items, mode) {
+  const payloadItems = items.map((item) => ({
+    id: item.id,
+    brand: cleanText(item.brand) || "—",
+    product: cleanText(item.product) || "—",
+    flavor: cleanText(item.flavor) || "—",
+    stock: Math.max(0, Number(item.stock) || 0)
+  }));
+
+  if (state.serverOnline) {
+    const response = await fetch("/api/inventory", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-pin": els.adminPin.value
+      },
+      body: JSON.stringify({ mode, items: payloadItems })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Could not save inventory.");
+    state.inventory = Array.isArray(data.items) ? data.items : [];
+  } else {
+    const withIds = payloadItems.map((item) => ({ ...item, id: item.id || crypto.randomUUID() }));
+    if (mode === "merge") {
+      const map = new Map(state.inventory.map((item) => [invKey(item), item]));
+      withIds.forEach((item) => {
+        const existing = map.get(invKey(item));
+        map.set(invKey(item), { ...item, id: existing?.id || item.id });
+      });
+      state.inventory = Array.from(map.values());
+    } else {
+      state.inventory = withIds;
+    }
+    localStorage.setItem(INV_STORE_KEY, JSON.stringify(state.inventory));
+  }
+  render();
+}
+
+function invKey(item) {
+  return [item.brand, item.product, item.flavor].map((part) => cleanText(part).toLowerCase()).join("|");
+}
+
+function normKey(value) {
+  return cleanText(value).toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function inboundByBrandFlavor(rows) {
+  const map = new Map();
+  rows
+    .filter((row) => row.phase !== "Received")
+    .forEach((row) => {
+      row.lines.forEach((line) => {
+        const key = `${normKey(row.brand)}|${normKey(line.name)}`;
+        map.set(key, (map.get(key) || 0) + (line.cases || 0));
+      });
+    });
+  return map;
+}
+
+function stockFlag(item) {
+  if (!item.stock) return { label: "OUT", cls: "flag-out" };
+  if (item.stock <= state.threshold) return { label: "LOW", cls: "flag-low" };
+  return { label: "OK", cls: "flag-ok" };
+}
+
+function renderInventory(enrichedRows) {
+  if (!els.invRows) return;
+  const items = state.inventory.slice().sort((a, b) => (a.stock || 0) - (b.stock || 0));
+  const inbound = inboundByBrandFlavor(enrichedRows);
+  const totalUnits = items.reduce((sum, item) => sum + (item.stock || 0), 0);
+  const low = items.filter((item) => item.stock > 0 && item.stock <= state.threshold).length;
+  const out = items.filter((item) => !item.stock).length;
+
+  els.invCount.textContent = items.length
+    ? `${formatNumber(totalUnits)} units · ${items.length} SKUs · ${low} low · ${out} out`
+    : "No stock loaded";
+
+  if (!items.length) {
+    els.invRows.innerHTML = `<tr><td colspan="7" class="empty-cell">Upload the stock file (Product Name / Current Stock) or add items manually.</td></tr>`;
+    return;
+  }
+
+  els.invRows.innerHTML = items
+    .map((item) => {
+      const flag = stockFlag(item);
+      const inboundCases = inbound.get(`${normKey(item.brand)}|${normKey(item.flavor)}`) || 0;
+      return `<tr>
+        <td><strong>${escapeHtml(item.brand)}</strong></td>
+        <td>${escapeHtml(item.product)}</td>
+        <td>${escapeHtml(item.flavor)}</td>
+        <td class="num"><input class="stock-input" type="number" min="0" value="${item.stock || 0}" data-stock-id="${escapeHtml(item.id)}"></td>
+        <td class="num muted-cell" title="Inbound cartons matched by brand + flavor">${inboundCases ? `+${formatNumber(inboundCases)}` : "—"}</td>
+        <td><span class="flag ${flag.cls}">${flag.label}</span></td>
+        <td class="num"><button class="row-del" type="button" data-del-id="${escapeHtml(item.id)}" title="Delete">✕</button></td>
+      </tr>`;
+    })
+    .join("");
+}
+
+/* ================= calendar ================= */
+function renderCalendar(rows) {
+  if (!els.calendarGrid) return;
+  const start = startOfDay(new Date());
+  start.setDate(start.getDate() - ((start.getDay() + 6) % 7)); // back to Monday
+  const days = 28;
+  const events = new Map();
+  rows
+    .filter((row) => row.relevantDate && row.phase !== "Received")
+    .forEach((row) => {
+      if (!events.has(row.relevantDate)) events.set(row.relevantDate, []);
+      events.get(row.relevantDate).push(row);
+    });
+
+  const end = new Date(start);
+  end.setDate(end.getDate() + days - 1);
+  els.calRange.textContent = `${shortDate(toIsoDate(start))} – ${shortDate(toIsoDate(end))}`;
+
+  const todayIso = toIsoDate(new Date());
+  const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    .map((day) => `<div class="cal-head">${day}</div>`)
+    .join("");
+
+  const cells = [];
+  for (let i = 0; i < days; i += 1) {
+    const date = new Date(start);
+    date.setDate(date.getDate() + i);
+    const iso = toIsoDate(date);
+    const dayEvents = events.get(iso) || [];
+    const cases = sumCases(dayEvents);
+    const isToday = iso === todayIso;
+    const isPast = iso < todayIso;
+    const monthLabel = date.getDate() === 1 || i === 0 ? `<span class="cal-month">${date.toLocaleDateString(undefined, { month: "short" })}</span>` : "";
+    const pop = dayEvents.length
+      ? `<div class="cal-pop"><div class="cal-pop-date">${date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })} · ${formatNumber(cases)} cases</div>${dayEvents
+          .map(
+            (row) => `<div class="cal-pop-row"><strong>${escapeHtml(row.brand)} ${escapeHtml(row.productType)}</strong><span>${formatNumber(row.caseCount)} cases · ${escapeHtml(row.phase)} · ${escapeHtml(row.mode)}</span>${row.cargoStatus ? `<em>${escapeHtml(row.cargoStatus)}</em>` : ""}</div>`
+          )
+          .join("")}</div>`
+      : "";
+    cells.push(
+      `<div class="cal-day${isToday ? " today" : ""}${isPast ? " past" : ""}${dayEvents.length ? " has-events" : ""}">
+        <span class="cal-num">${monthLabel}${date.getDate()}</span>
+        ${dayEvents.length ? `<span class="cal-badge">${formatNumber(cases)}</span><span class="cal-ships">${dayEvents.length} shipment${dayEvents.length === 1 ? "" : "s"}</span>` : ""}
+        ${pop}
+      </div>`
+    );
+  }
+
+  els.calendarGrid.innerHTML = weekdays + cells.join("");
+}
+
+/* ================= archive ================= */
+function isArchived(row) {
+  if (row.phase !== "Received") return false;
+  const reference = row.relevantDate || (row.updatedAt ? row.updatedAt.slice(0, 10) : null);
+  if (!reference) return false;
+  const age = (startOfDay(new Date()) - new Date(`${reference}T00:00:00`)) / 86400000;
+  return age > ARCHIVE_AFTER_DAYS;
+}
+
+/* ================= csv export ================= */
+function csvEscape(value) {
+  const text = String(value ?? "");
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function exportCsv() {
+  const rows = state.rows.map(enrichRow);
+  const header = ["Shipment Type", "Pick Up Date", "Brand", "Product Type", "Flavors", "Box Count", "Cargo Status", "Phase", "Freight", "Source"];
+  const lines = [header.join(",")];
+  rows.forEach((row) => {
+    lines.push(
+      [row.shipmentType, row.pickupDate, row.brand, row.productType, row.flavors, row.caseCount, row.cargoStatus, row.phase, row.mode, row.source]
+        .map(csvEscape)
+        .join(",")
+    );
+  });
+  if (state.inventory.length) {
+    lines.push("");
+    lines.push(["Inventory — Brand", "Product (SPU)", "Flavor (SKU)", "Current Stock", "Alert"].join(","));
+    state.inventory
+      .slice()
+      .sort((a, b) => (a.stock || 0) - (b.stock || 0))
+      .forEach((item) => {
+        lines.push([item.brand, item.product, item.flavor, item.stock || 0, stockFlag(item).label].map(csvEscape).join(","));
+      });
+  }
+  const blob = new Blob([`\ufeff${lines.join("\n")}`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `shipment-inventory-${toIsoDate(new Date())}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function openBoardReport() {
   const rows = state.rows.map(enrichRow);
   if (!rows.length) {
@@ -303,6 +715,35 @@ function openBoardReport() {
         .join("")}</div>`
     : "";
 
+  const weekAgo = (() => {
+    const target = new Date();
+    target.setDate(target.getDate() - 6);
+    const targetIso = toIsoDate(target);
+    const candidates = (state.snapshots || []).filter((snap) => snap.date <= targetIso);
+    return candidates.length ? candidates[candidates.length - 1] : null;
+  })();
+  const fmtDelta = (now, then) => {
+    const diff = now - then;
+    if (!diff) return "unchanged";
+    return `${diff > 0 ? "+" : "−"}${formatNumber(Math.abs(diff))}`;
+  };
+  const stockTotal = state.inventory.reduce((sum, item) => sum + (item.stock || 0), 0);
+  const trendBlock = weekAgo
+    ? `<div class="section"><h3>Since ${escapeHtml(shortDate(weekAgo.date))}</h3><div class="trend"><span><b>${fmtDelta(total, weekAgo.totalCases)}</b> cases inbound</span><span><b>${fmtDelta(rows.length, weekAgo.shipmentCount)}</b> shipments</span>${state.inventory.length ? `<span><b>${fmtDelta(stockTotal, weekAgo.totalStock || 0)}</b> units on hand</span>` : ""}</div></div>`
+    : "";
+  const lowItems = state.inventory.filter((item) => item.stock > 0 && item.stock <= state.threshold).sort((a, b) => a.stock - b.stock);
+  const outItems = state.inventory.filter((item) => !item.stock);
+  const inboundMap = inboundByBrandFlavor(rows);
+  const invList = (items) => items
+    .slice(0, 12)
+    .map((item) => {
+      const inboundCases = inboundMap.get(`${normKey(item.brand)}|${normKey(item.flavor)}`) || 0;
+      return `<div class="att-row"><b>${escapeHtml(item.brand)} ${escapeHtml(item.flavor)}</b> — ${formatNumber(item.stock || 0)} in stock${inboundCases ? ` · ${formatNumber(inboundCases)} inbound` : " · nothing inbound"}</div>`;
+    })
+    .join("") || '<div class="att-row">None</div>';
+  const inventoryBlock = state.inventory.length
+    ? `<div class="cols"><div class="section"><h3>Warehouse — ${formatNumber(stockTotal)} units · ${state.inventory.length} SKUs</h3><div class="trend"><span><b>${lowItems.length}</b> low stock</span><span><b>${outItems.length}</b> out of stock</span></div></div><div class="section"><h3>Low stock (top)</h3>${invList(lowItems)}</div><div class="section attention"><h3>Out of stock</h3>${invList(outItems)}</div></div>`
+    : "";
   const generated = new Date();
   const dateLong = generated.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 
@@ -348,6 +789,8 @@ td.muted{color:#8a8a93;max-width:280px}
 .attention{border-color:#f4c7c3;background:#fffafa}
 .att-row{font-size:13px;padding:7px 0;border-bottom:1px solid #f7e3e1}
 .att-row:last-child{border-bottom:none}
+.trend{display:flex;gap:22px;flex-wrap:wrap;font-size:13px;color:#8a8a93}
+.trend b{color:#0e0e10;font-size:16px;font-variant-numeric:tabular-nums}
 .foot{margin-top:26px;font-size:11.5px;color:#8a8a93;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
 @media print{.printbtn{display:none}body{padding:0}}
 </style></head><body>
@@ -363,6 +806,7 @@ td.muted{color:#8a8a93;max-width:280px}
     <div class="kpi"><div class="lbl">Brands</div><div class="val">${brands.size}</div></div>
     <div class="kpi"><div class="lbl">Needs attention</div><div class="val">${attention.length}</div></div>
   </div>
+  ${trendBlock}
   ${attentionBlock}
   <div class="cols">
     <div class="section"><h3>Cases by status</h3>${barRows(phases)}</div>
@@ -371,6 +815,7 @@ td.muted{color:#8a8a93;max-width:280px}
   </div>
   <div class="eyebrow" style="margin-bottom:12px">Product breakdown — brand / SPU / flavor</div>
   <div class="pgrid">${productCards}</div>
+  ${inventoryBlock}
   <div class="section"><h3>All shipments</h3><table><thead><tr><th>Mode</th><th>Pick up</th><th>Brand</th><th>Product</th><th style="text-align:right">Cases</th><th>Status</th><th>Cargo status</th></tr></thead><tbody>${tableRows}</tbody></table></div>
   <div class="foot"><span>Generated ${generated.toLocaleString()}</span><span>Internal — prepared for board review</span></div>
 </div>
@@ -672,7 +1117,19 @@ function extractStatusDates(text, fallbackYear) {
 
 function render() {
   const enrichedRows = state.rows.map(enrichRow);
-  const filteredRows = filterRows(enrichedRows);
+  const archivedRows = enrichedRows.filter(isArchived);
+  const activeRows = enrichedRows.filter((row) => !isArchived(row));
+  const visibleRows = state.showArchive ? enrichedRows : activeRows;
+  const filteredRows = filterRows(visibleRows);
+
+  if (els.archiveToggle) {
+    els.archiveToggle.textContent = state.showArchive
+      ? `Hide archived (${archivedRows.length})`
+      : `Show archived (${archivedRows.length})`;
+    els.archiveToggle.classList.toggle("active", state.showArchive);
+  }
+  renderCalendar(activeRows);
+  renderInventory(activeRows);
 
   els.asOfDate.textContent = formatDate(new Date());
   els.connectionBadge.textContent = state.serverOnline ? "Shared" : "Local";
