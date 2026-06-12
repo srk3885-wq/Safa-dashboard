@@ -57,6 +57,7 @@ function cacheElements() {
     fileInput: document.querySelector("#fileInput"),
     fileDrop: document.querySelector("#fileDrop"),
     adminPin: document.querySelector("#adminPin"),
+    boardReport: document.querySelector("#boardReport"),
     exportJson: document.querySelector("#exportJson"),
     clearData: document.querySelector("#clearData"),
     manualForm: document.querySelector("#manualForm"),
@@ -102,6 +103,7 @@ function bindEvents() {
     localStorage.setItem(PIN_KEY, els.adminPin.value);
   });
 
+  els.boardReport.addEventListener("click", openBoardReport);
   els.exportJson.addEventListener("click", exportJson);
   els.clearData.addEventListener("click", clearData);
   els.manualForm.addEventListener("submit", handleManualEntry);
@@ -236,6 +238,151 @@ async function clearData() {
   } catch (error) {
     setStatus(error.message || "Clear failed");
   }
+}
+
+
+function openBoardReport() {
+  const rows = state.rows.map(enrichRow);
+  if (!rows.length) {
+    window.alert("No shipment data to report yet.");
+    return;
+  }
+
+  const total = sumCases(rows);
+  const phases = new Map();
+  const modes = new Map();
+  const brands = new Map();
+  rows.forEach((row) => {
+    phases.set(row.phase, (phases.get(row.phase) || 0) + row.caseCount);
+    modes.set(row.mode, (modes.get(row.mode) || 0) + row.caseCount);
+    brands.set(row.brand || "—", (brands.get(row.brand || "—") || 0) + row.caseCount);
+  });
+  const groups = groupProducts(rows);
+  const attention = rows.filter((row) => row.phase === "Attention");
+  const inTransit = phases.get("In Transit") || 0;
+  const received = phases.get("Received") || 0;
+
+  const barRows = (map) => {
+    const entries = Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
+    const max = Math.max(...entries.map((e) => e[1]), 1);
+    const sum = entries.reduce((acc, e) => acc + e[1], 0) || 1;
+    return entries
+      .map(
+        ([name, value]) => `<div class="brow"><div class="btop"><span>${escapeHtml(name)}</span><b>${formatNumber(value)} <i>${Math.round((value / sum) * 100)}%</i></b></div><div class="bar"><span style="width:${Math.max((value / max) * 100, 2)}%"></span></div></div>`
+      )
+      .join("");
+  };
+
+  const productCards = groups
+    .map((group) => {
+      const top = group.lines.slice(0, 6);
+      const max = Math.max(...top.map((line) => line.cases), 1);
+      const flavorRows = top
+        .map(
+          (line) => `<div class="frow"><div class="btop"><span>${escapeHtml(line.name)}</span><b>${formatNumber(line.cases)}</b></div><div class="bar slim"><span style="width:${Math.max((line.cases / max) * 100, 2)}%"></span></div></div>`
+        )
+        .join("");
+      const more = group.lines.length > 6 ? `<div class="more">+ ${group.lines.length - 6} more flavors</div>` : "";
+      return `<div class="pcard"><div class="pbrand">${escapeHtml(group.brand)} · ${escapeHtml(group.phase)}</div><div class="pname">${escapeHtml(group.product)}</div>${flavorRows}${more}<div class="ptotal"><b>${formatNumber(group.total)}</b> cases · ${group.shipments} shipment${group.shipments === 1 ? "" : "s"}</div></div>`;
+    })
+    .join("");
+
+  const tableRows = rows
+    .slice()
+    .sort((a, b) => (b.relevantDate || "").localeCompare(a.relevantDate || ""))
+    .map(
+      (row) => `<tr><td>${escapeHtml(row.mode)}</td><td>${escapeHtml(shortDate(row.pickupDate) || "—")}</td><td><b>${escapeHtml(row.brand)}</b></td><td>${escapeHtml(row.productType)}</td><td class="num">${formatNumber(row.caseCount)}</td><td>${escapeHtml(row.phase)}</td><td class="muted">${escapeHtml(row.cargoStatus || "—")}</td></tr>`
+    )
+    .join("");
+
+  const attentionBlock = attention.length
+    ? `<div class="section attention"><h3>Needs attention (${attention.length})</h3>${attention
+        .map(
+          (row) => `<div class="att-row"><b>${escapeHtml(row.brand)} ${escapeHtml(row.productType)}</b> — ${formatNumber(row.caseCount)} cases · ${escapeHtml(row.cargoStatus || "no status")}</div>`
+        )
+        .join("")}</div>`
+    : "";
+
+  const generated = new Date();
+  const dateLong = generated.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+
+  const html = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Board Overview — ${dateLong}</title><style>
+*{margin:0;padding:0;box-sizing:border-box}
+@page{margin:13mm}
+body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:#fff;color:#0e0e10;-webkit-font-smoothing:antialiased;padding:clamp(20px,4vw,56px)}
+.sheet{max-width:1000px;margin:0 auto}
+.eyebrow{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#8a8a93}
+h1{font-size:clamp(26px,4vw,40px);font-weight:850;letter-spacing:-.02em;margin:4px 0 2px}
+.subtitle{color:#8a8a93;font-size:14px;margin-bottom:28px}
+.printbtn{position:fixed;top:18px;right:18px;background:#0e0e10;color:#fff;border:none;border-radius:10px;padding:11px 18px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:28px}
+.kpi{border:1px solid #e6e6ea;border-radius:14px;padding:16px 18px}
+.kpi.dark{background:#0e0e10;border-color:#0e0e10;color:#fff}
+.kpi .lbl{font-size:10px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:#8a8a93}
+.kpi.dark .lbl{color:#9c9ca6}
+.kpi .val{font-size:26px;font-weight:850;letter-spacing:-.02em;margin-top:6px;font-variant-numeric:tabular-nums}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-bottom:28px}
+.section{border:1px solid #e6e6ea;border-radius:14px;padding:20px;break-inside:avoid;margin-bottom:14px}
+.section h3{font-size:11px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:#8a8a93;margin-bottom:14px}
+.brow,.frow{margin-bottom:11px}
+.btop{display:flex;justify-content:space-between;gap:10px;font-size:13px;margin-bottom:5px}
+.btop b{font-variant-numeric:tabular-nums;font-weight:700}
+.btop i{font-style:normal;color:#8a8a93;font-size:11px;font-weight:600}
+.bar{height:7px;background:#f0f0f3;border-radius:99px;overflow:hidden}
+.bar.slim{height:5px}
+.bar span{display:block;height:100%;background:#0e0e10;border-radius:99px}
+.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-bottom:28px}
+.pcard{border:1px solid #e6e6ea;border-radius:14px;padding:18px 20px;break-inside:avoid}
+.pbrand{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#8a8a93}
+.pname{font-size:17px;font-weight:820;margin:2px 0 14px}
+.ptotal{border-top:1px solid #f0f0f3;margin-top:12px;padding-top:11px;font-size:13px;color:#8a8a93}
+.ptotal b{color:#0e0e10;font-size:15px}
+.more{font-size:11.5px;color:#8a8a93}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#8a8a93;text-align:left;padding:9px 10px;border-bottom:1px solid #e6e6ea}
+td{padding:9px 10px;border-bottom:1px solid #f0f0f3;vertical-align:top}
+td.num{text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+td.muted{color:#8a8a93;max-width:280px}
+.attention{border-color:#f4c7c3;background:#fffafa}
+.att-row{font-size:13px;padding:7px 0;border-bottom:1px solid #f7e3e1}
+.att-row:last-child{border-bottom:none}
+.foot{margin-top:26px;font-size:11.5px;color:#8a8a93;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+@media print{.printbtn{display:none}body{padding:0}}
+</style></head><body>
+<button class="printbtn" onclick="window.print()">Print / Save as PDF</button>
+<div class="sheet">
+  <div class="eyebrow">Shipment / Inventory</div>
+  <h1>Board Overview</h1>
+  <div class="subtitle">${dateLong} · ${rows.length} active shipment${rows.length === 1 ? "" : "s"} · live data snapshot</div>
+  <div class="kpis">
+    <div class="kpi dark"><div class="lbl">Total cases inbound</div><div class="val">${formatNumber(total)}</div></div>
+    <div class="kpi"><div class="lbl">In transit</div><div class="val">${formatNumber(inTransit)}</div></div>
+    <div class="kpi"><div class="lbl">Received</div><div class="val">${formatNumber(received)}</div></div>
+    <div class="kpi"><div class="lbl">Brands</div><div class="val">${brands.size}</div></div>
+    <div class="kpi"><div class="lbl">Needs attention</div><div class="val">${attention.length}</div></div>
+  </div>
+  ${attentionBlock}
+  <div class="cols">
+    <div class="section"><h3>Cases by status</h3>${barRows(phases)}</div>
+    <div class="section"><h3>Cases by brand</h3>${barRows(brands)}</div>
+    <div class="section"><h3>Cases by freight</h3>${barRows(modes)}</div>
+  </div>
+  <div class="eyebrow" style="margin-bottom:12px">Product breakdown — brand / SPU / flavor</div>
+  <div class="pgrid">${productCards}</div>
+  <div class="section"><h3>All shipments</h3><table><thead><tr><th>Mode</th><th>Pick up</th><th>Brand</th><th>Product</th><th style="text-align:right">Cases</th><th>Status</th><th>Cargo status</th></tr></thead><tbody>${tableRows}</tbody></table></div>
+  <div class="foot"><span>Generated ${generated.toLocaleString()}</span><span>Internal — prepared for board review</span></div>
+</div>
+</body></html>`;
+
+  const win = window.open("", "_blank");
+  if (!win) {
+    window.alert("Please allow pop-ups for this site to open the report.");
+    return;
+  }
+  win.document.write(html);
+  win.document.close();
 }
 
 function exportJson() {

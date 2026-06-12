@@ -37,9 +37,9 @@ button {
 }
 
 .shell {
-  width: min(1180px, calc(100% - 32px));
+  width: min(1480px, 92vw);
   margin: 0 auto;
-  padding: 28px 0 48px;
+  padding: clamp(18px, 2.5vw, 44px) 0 clamp(40px, 4vw, 72px);
 }
 
 .topbar {
