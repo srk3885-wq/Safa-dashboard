@@ -80,7 +80,12 @@ function cacheElements() {
     invThreshold: document.querySelector("#invThreshold"),
     invForm: document.querySelector("#invForm"),
     invRows: document.querySelector("#invRows"),
-    invCount: document.querySelector("#invCount")
+    invCount: document.querySelector("#invCount"),
+    importDialog: document.querySelector("#importDialog"),
+    importSummary: document.querySelector("#importSummary"),
+    importMerge: document.querySelector("#importMerge"),
+    importReplace: document.querySelector("#importReplace"),
+    importCancel: document.querySelector("#importCancel")
   });
 }
 
@@ -266,14 +271,59 @@ function persistLocal() {
   localStorage.setItem(STORE_KEY, JSON.stringify(state.rows));
 }
 
+
+function askImportMode(count, label, preferred = "replace") {
+  const dialog = els.importDialog;
+  if (!dialog || typeof dialog.showModal !== "function") {
+    const replace = window.confirm(`${count} ${label} found.\n\nOK = REPLACE all existing data\nCancel = ADD to existing data`);
+    return Promise.resolve(replace ? "replace" : "merge");
+  }
+  els.importSummary.textContent = `${formatNumber(count)} ${label} found in the file, and there is already data loaded. What should happen to the existing data?`;
+  els.importMerge.classList.toggle("suggested", preferred === "merge");
+  els.importReplace.classList.toggle("suggested", preferred === "replace");
+  return new Promise((resolve) => {
+    const finish = (value) => {
+      cleanup();
+      if (dialog.open) dialog.close();
+      resolve(value);
+    };
+    const onMerge = () => finish("merge");
+    const onReplace = () => finish("replace");
+    const onCancel = () => finish(null);
+    function cleanup() {
+      els.importMerge.removeEventListener("click", onMerge);
+      els.importReplace.removeEventListener("click", onReplace);
+      els.importCancel.removeEventListener("click", onCancel);
+      dialog.removeEventListener("cancel", onCancel);
+    }
+    els.importMerge.addEventListener("click", onMerge);
+    els.importReplace.addEventListener("click", onReplace);
+    els.importCancel.addEventListener("click", onCancel);
+    dialog.addEventListener("cancel", onCancel);
+    dialog.showModal();
+  });
+}
+
 async function handleFile(file) {
   try {
     setStatus("Reading file");
     const rows = await parseFile(file);
     if (!rows.length) throw new Error("No usable shipment rows were found.");
 
-    await applyIncomingRows(rows, state.importMode);
-    setStatus(`${rows.length} row${rows.length === 1 ? "" : "s"} imported`);
+    let mode = "replace";
+    if (state.rows.length) {
+      mode = await askImportMode(rows.length, "shipment rows", state.importMode);
+      if (!mode) {
+        setStatus("Import cancelled — nothing changed");
+        return;
+      }
+    }
+    await applyIncomingRows(rows, mode);
+    setStatus(
+      mode === "merge"
+        ? `${rows.length} row${rows.length === 1 ? "" : "s"} added to existing data`
+        : `${rows.length} row${rows.length === 1 ? "" : "s"} imported`
+    );
   } catch (error) {
     setStatus(error.message || "Import failed");
   }
@@ -359,8 +409,21 @@ async function handleInventoryFile(file) {
     setStatus("Reading stock file");
     const items = await parseInventoryFile(file);
     if (!items.length) throw new Error("No usable stock rows were found.");
-    await applyIncomingInventory(items, "replace");
-    setStatus(`${items.length} SKU${items.length === 1 ? "" : "s"} imported`);
+
+    let mode = "replace";
+    if (state.inventory.length) {
+      mode = await askImportMode(items.length, "stock SKUs", "replace");
+      if (!mode) {
+        setStatus("Import cancelled — nothing changed");
+        return;
+      }
+    }
+    await applyIncomingInventory(items, mode);
+    setStatus(
+      mode === "merge"
+        ? `${items.length} SKU${items.length === 1 ? "" : "s"} added/updated in stock`
+        : `${items.length} SKU${items.length === 1 ? "" : "s"} imported`
+    );
   } catch (error) {
     setStatus(error.message || "Stock import failed");
   }

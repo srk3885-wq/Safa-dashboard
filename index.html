@@ -220,5 +220,20 @@
         </div>
       </section>
     </main>
+    <dialog id="importDialog">
+      <h3>How should this file be imported?</h3>
+      <p id="importSummary"></p>
+      <div class="import-options">
+        <button id="importMerge" type="button">
+          <strong>Add / update existing</strong>
+          <span>Keeps everything already loaded. Rows that match are updated, new ones are added on top.</span>
+        </button>
+        <button id="importReplace" type="button">
+          <strong>Replace all</strong>
+          <span>The file becomes the complete new list. Everything previously loaded is removed.</span>
+        </button>
+      </div>
+      <button id="importCancel" type="button" class="ghost">Cancel import</button>
+    </dialog>
   </body>
 </html>

@@ -657,3 +657,43 @@ td.num { font-variant-numeric: tabular-nums; font-weight: 700; }
   .cal-pop { position: fixed; left: 50%; right: auto; top: 50%; bottom: auto; transform: translate(-50%, -50%); width: 88vw; }
   .inv-add input { min-width: 90px; }
 }
+
+/* ---------- import dialog ---------- */
+#importDialog {
+  border: none;
+  border-radius: 18px;
+  padding: 28px;
+  width: min(480px, 92vw);
+  box-shadow: 0 24px 80px rgba(17, 17, 17, 0.3);
+  font-family: inherit;
+  color: var(--ink);
+}
+#importDialog::backdrop { background: rgba(17, 17, 17, 0.45); }
+#importDialog h3 { margin: 0 0 6px; font-size: 1.1rem; font-weight: 820; }
+#importDialog p { color: var(--muted); font-size: 0.85rem; margin: 0 0 18px; }
+.import-options { display: grid; gap: 10px; margin-bottom: 14px; }
+.import-options button {
+  text-align: left;
+  border: 1.5px solid var(--line);
+  background: var(--panel);
+  border-radius: 14px;
+  padding: 14px 16px;
+  cursor: pointer;
+  display: grid;
+  gap: 4px;
+  font-family: inherit;
+}
+.import-options button:hover { border-color: var(--ink); }
+.import-options button.suggested { border-color: var(--ink); background: var(--soft); }
+.import-options button strong { font-size: 0.95rem; font-weight: 800; }
+.import-options button span { color: var(--muted); font-size: 0.78rem; line-height: 1.35; }
+#importCancel {
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.82rem;
+  padding: 6px 2px;
+}
+#importCancel:hover { color: var(--ink); }
