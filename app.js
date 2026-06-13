@@ -229,7 +229,7 @@ async function loadInitialData() {
     if (!response.ok) throw new Error("Shared data unavailable.");
     const data = await response.json();
     state.serverOnline = true;
-    state.rows = normalizeRows(data.rows?.length ? data.rows : SAMPLE_ROWS);
+    state.rows = normalizeRows(Array.isArray(data.rows) ? data.rows : []);
     try {
       const invResponse = await fetch("/api/inventory", { cache: "no-store" });
       const invData = invResponse.ok ? await invResponse.json() : { items: [] };
@@ -248,7 +248,7 @@ async function loadInitialData() {
   } catch {
     state.serverOnline = false;
     const saved = readLocalRows();
-    state.rows = normalizeRows(saved.length ? saved : SAMPLE_ROWS);
+    state.rows = normalizeRows(saved);
     try {
       state.inventory = JSON.parse(localStorage.getItem(INV_STORE_KEY) || "[]");
     } catch {
@@ -884,13 +884,16 @@ td.muted{color:#8a8a93;max-width:280px}
 </div>
 </body></html>`;
 
-  const win = window.open("", "_blank");
-  if (!win) {
-    window.alert("Please allow pop-ups for this site to open the report.");
-    return;
-  }
-  win.document.write(html);
-  win.document.close();
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
 function exportJson() {
